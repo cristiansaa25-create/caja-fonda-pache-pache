@@ -231,7 +231,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const salesCollection = db.collection("Ventas");
-const printCollection = db.collection("Impresiones");
+const printCollection = db.collection("Ventas");
 const productsCollection = db.collection("Productos");
 let sharedSales = [];
 let firestoreReady = false;
@@ -464,7 +464,7 @@ async function printDailySummary(){
   text+="--------------------------------\n\n\n";
   try{
     await printCollection.add({
-      type:"daily_summary",
+      recordType:"daily_summary_print",
       date:today,
       createdAt:firebase.firestore.FieldValue.serverTimestamp(),
       clientTime:now.toISOString(),
@@ -610,7 +610,7 @@ async function printRawBT(){
   const tip=Math.round(getTipEnabled()?subtotal*tipPct/100:0);
   try{
     await printCollection.add({
-      type:"product_ticket",
+      recordType:"device_print",
       date:todayKey(),
       createdAt:firebase.firestore.FieldValue.serverTimestamp(),
       clientTime:new Date().toISOString(),
