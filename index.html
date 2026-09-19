@@ -469,7 +469,7 @@ function startSalesSync(){
   salesCollection.onSnapshot(snapshot=>{
     sharedSales=snapshot.docs
       .map(doc=>({id:doc.id,...doc.data()}))
-      .filter(item=>item.recordType!=="device_print");
+      .filter(item=>item.recordType!=="device_print" && item.recordType!=="print_backup");
     firestoreReady=true;
     renderDailySummary();
   },err=>{
