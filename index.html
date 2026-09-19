@@ -444,7 +444,7 @@ function renderDailySummary(){
   document.getElementById("dailyCount").textContent=sales.length;
 }
 
-function printDailySummary(){
+async function printDailySummary(){
   const today=todayKey();
   const sales=sharedSales.filter(x=>x.date===today);
   if(!sales.length) return alert("No hay ventas registradas hoy.");
@@ -461,6 +461,22 @@ function printDailySummary(){
   text+="TOTAL:    "+money(cash+debit)+"\n";
   text+="Ventas:   "+sales.length+"\n";
   text+="--------------------------------\n\n\n";
+  try{
+    await salesCollection.add({
+      recordType:"daily_summary_print",
+      date:today,
+      createdAt:firebase.firestore.FieldValue.serverTimestamp(),
+      clientTime:now.toISOString(),
+      deviceId:getDevicePrintId(),
+      cash,
+      debit,
+      total:cash+debit,
+      saleCount:sales.length
+    });
+  }catch(err){
+    console.error("Daily summary tracking error",err);
+    alert("El resumen se imprimira, pero no pudo registrarse en el historial. Revisa Internet.");
+  }
   const uri="rawbt:data:text/plain;base64,"+utf8ToBase64(text);
   window.location.href=uri;
 }
@@ -469,7 +485,7 @@ function startSalesSync(){
   salesCollection.onSnapshot(snapshot=>{
     sharedSales=snapshot.docs
       .map(doc=>({id:doc.id,...doc.data()}))
-      .filter(item=>item.recordType!=="device_print" && item.recordType!=="print_backup");
+      .filter(item=>!item.recordType);
     firestoreReady=true;
     renderDailySummary();
   },err=>{
