@@ -231,6 +231,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const salesCollection = db.collection("Ventas");
+const printCollection = db.collection("Impresiones");
 const productsCollection = db.collection("Productos");
 let sharedSales = [];
 let firestoreReady = false;
@@ -444,7 +445,7 @@ function renderDailySummary(){
   document.getElementById("dailyCount").textContent=sales.length;
 }
 
-function printDailySummary(){
+async function printDailySummary(){
   const today=todayKey();
   const sales=sharedSales.filter(x=>x.date===today);
   if(!sales.length) return alert("No hay ventas registradas hoy.");
@@ -461,6 +462,20 @@ function printDailySummary(){
   text+="TOTAL:    "+money(cash+debit)+"\n";
   text+="Ventas:   "+sales.length+"\n";
   text+="--------------------------------\n\n\n";
+  try{
+    await printCollection.add({
+      type:"daily_summary",
+      date:today,
+      createdAt:firebase.firestore.FieldValue.serverTimestamp(),
+      clientTime:now.toISOString(),
+      cash,
+      debit,
+      total:cash+debit,
+      saleCount:sales.length
+    });
+  }catch(err){
+    console.error("No se pudo respaldar el resumen",err);
+  }
   const uri="rawbt:data:text/plain;base64,"+utf8ToBase64(text);
   window.location.href=uri;
 }
@@ -586,9 +601,24 @@ function utf8ToBase64(str){
   return btoa(binary);
 }
 
-function printRawBT(){
+async function printRawBT(){
   const text=buildThermalText();
   if(!text) return alert("No hay productos en la boleta.");
+  const items=Object.values(ticket);
+  const subtotal=items.reduce((sum,it)=>sum+Number(it.price)*Number(it.qty),0);
+  const tipPct=Math.max(0,Number(document.getElementById("tipPct").value)||0);
+  const tip=Math.round(getTipEnabled()?subtotal*tipPct/100:0);
+  try{
+    await printCollection.add({
+      type:"product_ticket",
+      date:todayKey(),
+      createdAt:firebase.firestore.FieldValue.serverTimestamp(),
+      clientTime:new Date().toISOString(),
+      total:Math.round(subtotal+tip)
+    });
+  }catch(err){
+    console.error("No se pudo respaldar la impresión",err);
+  }
   updatePrintDate();
   const uri="rawbt:data:text/plain;base64,"+utf8ToBase64(text);
   window.location.href=uri;
