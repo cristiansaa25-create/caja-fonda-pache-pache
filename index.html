@@ -444,7 +444,7 @@ function renderDailySummary(){
   document.getElementById("dailyCount").textContent=sales.length;
 }
 
-async function printDailySummary(){
+function printDailySummary(){
   const today=todayKey();
   const sales=sharedSales.filter(x=>x.date===today);
   if(!sales.length) return alert("No hay ventas registradas hoy.");
@@ -461,22 +461,6 @@ async function printDailySummary(){
   text+="TOTAL:    "+money(cash+debit)+"\n";
   text+="Ventas:   "+sales.length+"\n";
   text+="--------------------------------\n\n\n";
-  try{
-    await salesCollection.add({
-      recordType:"daily_summary_print",
-      date:today,
-      createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-      clientTime:now.toISOString(),
-      deviceId:getDevicePrintId(),
-      cash,
-      debit,
-      total:cash+debit,
-      saleCount:sales.length
-    });
-  }catch(err){
-    console.error("Daily summary tracking error",err);
-    alert("El resumen se imprimira, pero no pudo registrarse en el historial. Revisa Internet.");
-  }
   const uri="rawbt:data:text/plain;base64,"+utf8ToBase64(text);
   window.location.href=uri;
 }
@@ -602,41 +586,9 @@ function utf8ToBase64(str){
   return btoa(binary);
 }
 
-function getDevicePrintId(){
-  let id=localStorage.getItem("fondaDevicePrintId");
-  if(!id){
-    id="CY-BX58D-8173-"+Math.random().toString(36).slice(2,8).toUpperCase();
-    localStorage.setItem("fondaDevicePrintId",id);
-  }
-  return id;
-}
-
-async function saveDevicePrint(){
-  const items=Object.values(ticket);
-  const subtotal=items.reduce((sum,it)=>sum+Number(it.price)*Number(it.qty),0);
-  const tipPct=Math.max(0,Number(document.getElementById("tipPct").value)||0);
-  const tipEnabled=getTipEnabled();
-  const tip=Math.round(tipEnabled ? subtotal*tipPct/100 : 0);
-  await salesCollection.add({
-    recordType:"device_print",
-    deviceId:getDevicePrintId(),
-    deviceName:"CY-BX58D-8173",
-    date:todayKey(),
-    createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-    clientTime:new Date().toISOString(),
-    total:Math.round(subtotal+tip)
-  });
-}
-
-async function printRawBT(){
+function printRawBT(){
   const text=buildThermalText();
   if(!text) return alert("No hay productos en la boleta.");
-  try{
-    await saveDevicePrint();
-  }catch(err){
-    console.error("No se pudo registrar el total impreso",err);
-    alert("La boleta se imprimirá, pero no pudo sumarse al total de este dispositivo.");
-  }
   updatePrintDate();
   const uri="rawbt:data:text/plain;base64,"+utf8ToBase64(text);
   window.location.href=uri;
