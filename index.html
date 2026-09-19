@@ -200,7 +200,6 @@
         <div class="line daily-total"><span>Total del día</span><strong id="dailyTotal">$0</strong></div>
         <div class="line"><span>Ventas registradas</span><strong id="dailyCount">0</strong></div>
         <button class="green" style="width:100%;margin-top:6px" onclick="printDailySummary()">Imprimir resumen del día</button>
-        <button class="ghost" style="width:100%;margin-top:6px" onclick="resetDailySales()">Reiniciar resumen de hoy</button>
       </div>
 
       <div class="footerBtns">
@@ -424,7 +423,9 @@ async function registerSale(){
       clientTime: new Date().toISOString(),
       method, subtotal, tipEnabled, tipPct, tip, total, seller, table, items
     });
-    ticket={}; save();
+    ticket={};
+    localStorage.removeItem("fondaPrintTicketId");
+    save();
     document.querySelectorAll('input[name="paymentMethod"]').forEach(x=>x.checked=false);
     renderTicket();
     alert(`Venta registrada y sincronizada: ${money(total)} en ${method==="efectivo"?"Efectivo":"Débito"}.`);
@@ -466,23 +467,11 @@ function printDailySummary(){
   window.location.href=uri;
 }
 
-async function resetDailySales(){
-  if(!confirm("¿Reiniciar el resumen de ventas de hoy en TODOS los dispositivos?")) return;
-  const today=todayKey();
-  try{
-    const snap=await salesCollection.where("date","==",today).get();
-    const batch=db.batch();
-    snap.docs.forEach(doc=>batch.delete(doc.ref));
-    await batch.commit();
-  }catch(err){
-    console.error(err);
-    alert("No se pudo reiniciar el resumen compartido.");
-  }
-}
-
 function startSalesSync(){
   salesCollection.onSnapshot(snapshot=>{
-    sharedSales=snapshot.docs.map(doc=>({id:doc.id,...doc.data()}));
+    sharedSales=snapshot.docs
+      .map(doc=>({id:doc.id,...doc.data()}))
+      .filter(item=>item.recordType!=="print_backup");
     firestoreReady=true;
     renderDailySummary();
   },err=>{
@@ -494,7 +483,9 @@ function startSalesSync(){
 
 function clearTicket(){
   if(Object.keys(ticket).length && !confirm("¿Comenzar una nueva venta?")) return;
-  ticket={}; save(); renderTicket();
+  ticket={};
+  localStorage.removeItem("fondaPrintTicketId");
+  save(); renderTicket();
 }
 
 function copyTicket(){
@@ -599,9 +590,65 @@ function utf8ToBase64(str){
   return btoa(binary);
 }
 
-function printRawBT(){
+function getDeviceId(){
+  let id=localStorage.getItem("fondaDeviceId");
+  if(!id){
+    id="DISP-"+Math.random().toString(36).slice(2,8).toUpperCase();
+    localStorage.setItem("fondaDeviceId",id);
+  }
+  return id;
+}
+
+function getPrintTicketId(){
+  let id=localStorage.getItem("fondaPrintTicketId");
+  if(!id){
+    id=(crypto.randomUUID ? crypto.randomUUID() : Date.now()+"-"+Math.random().toString(36).slice(2));
+    localStorage.setItem("fondaPrintTicketId",id);
+  }
+  return id;
+}
+
+async function backupThermalPrint(){
+  const items=Object.values(ticket);
+  const subtotal=items.reduce((sum,it)=>sum+Number(it.price)*Number(it.qty),0);
+  const tipPct=Math.max(0,Number(document.getElementById("tipPct").value)||0);
+  const tipEnabled=getTipEnabled();
+  const tip=Math.round(tipEnabled ? subtotal*tipPct/100 : 0);
+  const ticketId=getPrintTicketId();
+  const countKey="fondaPrintCount:"+ticketId;
+  const printNumber=(Number(localStorage.getItem(countKey))||0)+1;
+  await salesCollection.add({
+    recordType:"print_backup",
+    date:todayKey(),
+    createdAt:firebase.firestore.FieldValue.serverTimestamp(),
+    clientTime:new Date().toISOString(),
+    ticketId,
+    printNumber,
+    reprint:printNumber>1,
+    deviceId:getDeviceId(),
+    seller:document.getElementById("sellerName").value.trim(),
+    table:document.getElementById("tableNumber").value.trim(),
+    method:getPaymentMethod(),
+    subtotal,
+    tipEnabled,
+    tipPct,
+    tip,
+    total:Math.round(subtotal+tip),
+    source:"thermal",
+    items:items.map(it=>({id:it.id,name:it.name,price:Number(it.price),qty:Number(it.qty),total:Number(it.price)*Number(it.qty)}))
+  });
+  localStorage.setItem(countKey,String(printNumber));
+}
+
+async function printRawBT(){
   const text=buildThermalText();
   if(!text) return alert("No hay productos en la boleta.");
+  try{
+    await backupThermalPrint();
+  }catch(err){
+    console.error("Error respaldando impresión",err);
+    return alert("No se pudo respaldar la impresión en Firebase. No se enviará a la impresora.");
+  }
   updatePrintDate();
   const uri="rawbt:data:text/plain;base64,"+utf8ToBase64(text);
   window.location.href=uri;
