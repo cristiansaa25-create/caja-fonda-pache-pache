@@ -188,8 +188,8 @@
       <div class="payment-box" id="paymentBox">
         <div class="payment-title">Forma de pago</div>
         <div class="payment-options">
-          <label class="payment-option"><input type="radio" name="paymentMethod" value="efectivo"><span>💵 Efectivo</span></label>
-          <label class="payment-option"><input type="radio" name="paymentMethod" value="debito"><span>💳 Débito</span></label>
+          <label class="payment-option"><input type="radio" name="paymentMethod" value="efectivo" onchange="syncSharedState()"><span>💵 Efectivo</span></label>
+          <label class="payment-option"><input type="radio" name="paymentMethod" value="debito" onchange="syncSharedState()"><span>💳 Débito</span></label>
         </div>
       </div>
 
@@ -232,6 +232,7 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const salesCollection = db.collection("Ventas");
 const printCollection = db.collection("Ventas");
+const sharedStateDoc = salesCollection.doc("_shared_cash_state");
 const productsCollection = db.collection("Productos");
 let sharedSales = [];
 let firestoreReady = false;
@@ -248,10 +249,60 @@ const defaultProducts = [
 
 let products = [];
 let ticket = JSON.parse(localStorage.getItem("ticketCaja") || "{}");
+let applyingSharedState=false;
+let sharedStateLoaded=false;
+let sharedStateTimer=null;
 
 function money(n){ return "$" + Math.round(n).toLocaleString("es-CL"); }
 function save(){
   localStorage.setItem("ticketCaja", JSON.stringify(ticket));
+  syncSharedState();
+}
+
+function syncSharedState(){
+  if(applyingSharedState || !sharedStateLoaded) return;
+  clearTimeout(sharedStateTimer);
+  sharedStateTimer=setTimeout(()=>{
+    sharedStateDoc.set({
+      recordType:"shared_state",
+      ticket:JSON.parse(JSON.stringify(ticket)),
+      seller:document.getElementById("sellerName").value.trim(),
+      table:document.getElementById("tableNumber").value.trim(),
+      tipChoice:getTipEnabled()?"yes":"no",
+      tipPct:document.getElementById("tipPct").value,
+      paymentMethod:getPaymentMethod(),
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+      clientTime:new Date().toISOString()
+    },{merge:true}).catch(err=>console.error("Shared state sync error",err));
+  },180);
+}
+
+function startSharedStateSync(){
+  sharedStateDoc.onSnapshot(doc=>{
+    applyingSharedState=true;
+    if(doc.exists){
+      const state=doc.data()||{};
+      ticket=state.ticket&&typeof state.ticket==="object"?state.ticket:{};
+      document.getElementById("sellerName").value=state.seller||"";
+      document.getElementById("tableNumber").value=state.table||"";
+      document.getElementById("tipPct").value=state.tipPct??"10";
+      const tip=document.querySelector(`input[name="tipChoice"][value="${state.tipChoice||"yes"}"]`);
+      if(tip) tip.checked=true;
+      document.querySelectorAll('input[name="paymentMethod"]').forEach(x=>x.checked=x.value===(state.paymentMethod||""));
+      localStorage.setItem("ticketCaja",JSON.stringify(ticket));
+      localStorage.setItem("fondaSeller",state.seller||"");
+      localStorage.setItem("fondaTable",state.table||"");
+      localStorage.setItem("fondaTipChoice",state.tipChoice||"yes");
+      localStorage.setItem("fondaTipPct",state.tipPct??"10");
+      const seller=state.seller||"",table=state.table||"";
+      document.getElementById("printSeller").textContent=seller?"Vendedor: "+seller:"";
+      document.getElementById("printTable").textContent=table?"Mesa: "+table:"";
+      renderTicket();
+    }
+    applyingSharedState=false;
+    sharedStateLoaded=true;
+    if(!doc.exists) syncSharedState();
+  },err=>console.error("Shared state listener error",err));
 }
 
 function renderProducts(){
@@ -426,6 +477,7 @@ async function registerSale(){
     });
     ticket={}; save();
     document.querySelectorAll('input[name="paymentMethod"]').forEach(x=>x.checked=false);
+    syncSharedState();
     renderTicket();
     alert(`Venta registrada y sincronizada: ${money(total)} en ${method==="efectivo"?"Efectivo":"Débito"}.`);
   }catch(err){
@@ -533,22 +585,26 @@ function updateTipChoice(){
   const enabled=getTipEnabled();
   localStorage.setItem("fondaTipChoice", enabled ? "yes" : "no");
   renderTicket();
+  syncSharedState();
 }
 
 function saveTipPct(){
   localStorage.setItem("fondaTipPct", document.getElementById("tipPct").value);
+  syncSharedState();
 }
 
 function updateSeller(){
   const name=document.getElementById("sellerName").value.trim();
   localStorage.setItem("fondaSeller",name);
   document.getElementById("printSeller").textContent=name ? "Vendedor: "+name : "";
+  syncSharedState();
 }
 
 function updateTable(){
   const table=document.getElementById("tableNumber").value.trim();
   localStorage.setItem("fondaTable",table);
   document.getElementById("printTable").textContent=table ? "Mesa: "+table : "";
+  syncSharedState();
 }
 
 function updatePrintDate(){
@@ -661,6 +717,7 @@ renderTicket();
 renderDailySummary();
 startProductsSync();
 startSalesSync();
+startSharedStateSync();
 </script>
 </body>
 </html>
