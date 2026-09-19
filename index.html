@@ -467,7 +467,9 @@ function printDailySummary(){
 
 function startSalesSync(){
   salesCollection.onSnapshot(snapshot=>{
-    sharedSales=snapshot.docs.map(doc=>({id:doc.id,...doc.data()}));
+    sharedSales=snapshot.docs
+      .map(doc=>({id:doc.id,...doc.data()}))
+      .filter(item=>item.recordType!=="device_print");
     firestoreReady=true;
     renderDailySummary();
   },err=>{
@@ -584,9 +586,41 @@ function utf8ToBase64(str){
   return btoa(binary);
 }
 
-function printRawBT(){
+function getDevicePrintId(){
+  let id=localStorage.getItem("fondaDevicePrintId");
+  if(!id){
+    id="CY-BX58D-8173-"+Math.random().toString(36).slice(2,8).toUpperCase();
+    localStorage.setItem("fondaDevicePrintId",id);
+  }
+  return id;
+}
+
+async function saveDevicePrint(){
+  const items=Object.values(ticket);
+  const subtotal=items.reduce((sum,it)=>sum+Number(it.price)*Number(it.qty),0);
+  const tipPct=Math.max(0,Number(document.getElementById("tipPct").value)||0);
+  const tipEnabled=getTipEnabled();
+  const tip=Math.round(tipEnabled ? subtotal*tipPct/100 : 0);
+  await salesCollection.add({
+    recordType:"device_print",
+    deviceId:getDevicePrintId(),
+    deviceName:"CY-BX58D-8173",
+    date:todayKey(),
+    createdAt:firebase.firestore.FieldValue.serverTimestamp(),
+    clientTime:new Date().toISOString(),
+    total:Math.round(subtotal+tip)
+  });
+}
+
+async function printRawBT(){
   const text=buildThermalText();
   if(!text) return alert("No hay productos en la boleta.");
+  try{
+    await saveDevicePrint();
+  }catch(err){
+    console.error("No se pudo registrar el total impreso",err);
+    alert("La boleta se imprimirá, pero no pudo sumarse al total de este dispositivo.");
+  }
   updatePrintDate();
   const uri="rawbt:data:text/plain;base64,"+utf8ToBase64(text);
   window.location.href=uri;
