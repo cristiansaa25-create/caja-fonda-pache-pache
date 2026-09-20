@@ -625,7 +625,7 @@ async function printRawBT(){
   const tipPct=Math.max(0,Number(document.getElementById("tipPct").value)||0);
   const tip=Math.round(getTipEnabled()?subtotal*tipPct/100:0);
   try{
-    await printCollection.add({
+    const printRef=await printCollection.add({
       recordType:"device_print",
       date:todayKey(),
       createdAt:firebase.firestore.FieldValue.serverTimestamp(),
@@ -640,8 +640,12 @@ async function printRawBT(){
       items:items.map(it=>({name:String(it.name),price:Number(it.price),qty:Number(it.qty)})),
       total:Math.round(subtotal+tip)
     });
+    const confirmedPrint=await printRef.get({source:"server"});
+    if(!confirmedPrint.exists) throw new Error("Firebase no confirmó la impresión");
   }catch(err){
     console.error("No se pudo respaldar la impresión",err);
+    alert("No se pudo sincronizar la impresión con Firebase. Revisa Internet y las reglas de Firestore. No se abrirá RawBT hasta respaldarla.");
+    return;
   }
   updatePrintDate();
   const uri="rawbt:data:text/plain;base64,"+utf8ToBase64(text);
