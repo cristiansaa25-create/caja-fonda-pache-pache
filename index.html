@@ -652,36 +652,9 @@ async function printRawBT(){
   window.location.href=uri;
 }
 
-async function printVoucher(){
+function printVoucher(){
   const items=Object.values(ticket);
   if(!items.length) return alert("No hay productos en la boleta.");
-  const subtotal=items.reduce((sum,it)=>sum+Number(it.price)*Number(it.qty),0);
-  const tipPct=Math.max(0,Number(document.getElementById("tipPct").value)||0);
-  const tip=Math.round(getTipEnabled()?subtotal*tipPct/100:0);
-  try{
-    const printRef=await printCollection.add({
-      recordType:"device_print",
-      printMethod:"system",
-      date:todayKey(),
-      createdAt:firebase.firestore.FieldValue.serverTimestamp(),
-      clientTime:new Date().toISOString(),
-      seller:document.getElementById("sellerName").value.trim(),
-      table:document.getElementById("tableNumber").value.trim(),
-      method:getPaymentMethod(),
-      subtotal:Math.round(subtotal),
-      tipEnabled:getTipEnabled(),
-      tipPct,
-      tip,
-      items:items.map(it=>({name:String(it.name),price:Number(it.price),qty:Number(it.qty)})),
-      total:Math.round(subtotal+tip)
-    });
-    const confirmedPrint=await printRef.get({source:"server"});
-    if(!confirmedPrint.exists) throw new Error("Firebase no confirmó la impresión");
-  }catch(err){
-    console.error("No se pudo respaldar la impresión por sistema",err);
-    alert("No se pudo sincronizar la impresión con Firebase. Revisa Internet y las reglas de Firestore. No se abrirá la impresión hasta respaldarla.");
-    return;
-  }
   renderTicket();
   updatePrintDate();
   window.print();
