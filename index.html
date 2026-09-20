@@ -188,8 +188,8 @@
       <div class="payment-box" id="paymentBox">
         <div class="payment-title">Forma de pago</div>
         <div class="payment-options">
-          <label class="payment-option"><input type="radio" name="paymentMethod" value="efectivo" onchange="syncSharedState()"><span>💵 Efectivo</span></label>
-          <label class="payment-option"><input type="radio" name="paymentMethod" value="debito" onchange="syncSharedState()"><span>💳 Débito</span></label>
+          <label class="payment-option"><input type="radio" name="paymentMethod" value="efectivo" onchange="savePaymentMethod()"><span>💵 Efectivo</span></label>
+          <label class="payment-option"><input type="radio" name="paymentMethod" value="debito" onchange="savePaymentMethod()"><span>💳 Débito</span></label>
         </div>
       </div>
 
@@ -232,7 +232,6 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const salesCollection = db.collection("Ventas");
 const printCollection = db.collection("Ventas");
-const sharedStateDoc = salesCollection.doc("_shared_cash_state");
 const productsCollection = db.collection("Productos");
 let sharedSales = [];
 let firestoreReady = false;
@@ -249,60 +248,9 @@ const defaultProducts = [
 
 let products = [];
 let ticket = JSON.parse(localStorage.getItem("ticketCaja") || "{}");
-let applyingSharedState=false;
-let sharedStateLoaded=false;
-let sharedStateTimer=null;
-
 function money(n){ return "$" + Math.round(n).toLocaleString("es-CL"); }
 function save(){
   localStorage.setItem("ticketCaja", JSON.stringify(ticket));
-  syncSharedState();
-}
-
-function syncSharedState(){
-  if(applyingSharedState || !sharedStateLoaded) return;
-  clearTimeout(sharedStateTimer);
-  sharedStateTimer=setTimeout(()=>{
-    sharedStateDoc.set({
-      recordType:"shared_state",
-      ticket:JSON.parse(JSON.stringify(ticket)),
-      seller:document.getElementById("sellerName").value.trim(),
-      table:document.getElementById("tableNumber").value.trim(),
-      tipChoice:getTipEnabled()?"yes":"no",
-      tipPct:document.getElementById("tipPct").value,
-      paymentMethod:getPaymentMethod(),
-      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
-      clientTime:new Date().toISOString()
-    },{merge:true}).catch(err=>console.error("Shared state sync error",err));
-  },180);
-}
-
-function startSharedStateSync(){
-  sharedStateDoc.onSnapshot(doc=>{
-    applyingSharedState=true;
-    if(doc.exists){
-      const state=doc.data()||{};
-      ticket=state.ticket&&typeof state.ticket==="object"?state.ticket:{};
-      document.getElementById("sellerName").value=state.seller||"";
-      document.getElementById("tableNumber").value=state.table||"";
-      document.getElementById("tipPct").value=state.tipPct??"10";
-      const tip=document.querySelector(`input[name="tipChoice"][value="${state.tipChoice||"yes"}"]`);
-      if(tip) tip.checked=true;
-      document.querySelectorAll('input[name="paymentMethod"]').forEach(x=>x.checked=x.value===(state.paymentMethod||""));
-      localStorage.setItem("ticketCaja",JSON.stringify(ticket));
-      localStorage.setItem("fondaSeller",state.seller||"");
-      localStorage.setItem("fondaTable",state.table||"");
-      localStorage.setItem("fondaTipChoice",state.tipChoice||"yes");
-      localStorage.setItem("fondaTipPct",state.tipPct??"10");
-      const seller=state.seller||"",table=state.table||"";
-      document.getElementById("printSeller").textContent=seller?"Vendedor: "+seller:"";
-      document.getElementById("printTable").textContent=table?"Mesa: "+table:"";
-      renderTicket();
-    }
-    applyingSharedState=false;
-    sharedStateLoaded=true;
-    if(!doc.exists) syncSharedState();
-  },err=>console.error("Shared state listener error",err));
 }
 
 function renderProducts(){
@@ -442,6 +390,10 @@ function getPaymentMethod(){
   return selected ? selected.value : "";
 }
 
+function savePaymentMethod(){
+  localStorage.setItem("fondaPaymentMethod", getPaymentMethod());
+}
+
 function getCurrentTotal(){
   let subtotal=Object.values(ticket).reduce((sum,it)=>sum+(it.price*it.qty),0);
   const pct=Math.max(0,Number(document.getElementById("tipPct").value)||0);
@@ -477,7 +429,7 @@ async function registerSale(){
     });
     ticket={}; save();
     document.querySelectorAll('input[name="paymentMethod"]').forEach(x=>x.checked=false);
-    syncSharedState();
+    localStorage.removeItem("fondaPaymentMethod");
     renderTicket();
     alert(`Venta registrada y sincronizada: ${money(total)} en ${method==="efectivo"?"Efectivo":"Débito"}.`);
   }catch(err){
@@ -515,7 +467,7 @@ async function printDailySummary(){
   text+="Ventas:   "+sales.length+"\n";
   text+="--------------------------------\n\n\n";
   try{
-    await printCollection.add({
+    const summaryRef=await printCollection.add({
       recordType:"daily_summary_print",
       date:today,
       createdAt:firebase.firestore.FieldValue.serverTimestamp(),
@@ -523,10 +475,22 @@ async function printDailySummary(){
       cash,
       debit,
       total:cash+debit,
-      saleCount:sales.length
+      saleCount:sales.length,
+      items:[],
+      method:"resumen_diario",
+      subtotal:cash+debit,
+      tipEnabled:false,
+      tipPct:0,
+      tip:0,
+      seller:"",
+      table:""
     });
+    const confirmedSummary=await summaryRef.get({source:"server"});
+    if(!confirmedSummary.exists) throw new Error("Firebase no confirmó el resumen diario");
   }catch(err){
     console.error("No se pudo respaldar el resumen",err);
+    alert("No se pudo sincronizar el resumen del día con Firebase. Revisa Internet y las reglas de Firestore. No se enviará a imprimir hasta respaldarlo.");
+    return;
   }
   const uri="rawbt:data:text/plain;base64,"+utf8ToBase64(text);
   window.location.href=uri;
@@ -585,26 +549,22 @@ function updateTipChoice(){
   const enabled=getTipEnabled();
   localStorage.setItem("fondaTipChoice", enabled ? "yes" : "no");
   renderTicket();
-  syncSharedState();
 }
 
 function saveTipPct(){
   localStorage.setItem("fondaTipPct", document.getElementById("tipPct").value);
-  syncSharedState();
 }
 
 function updateSeller(){
   const name=document.getElementById("sellerName").value.trim();
   localStorage.setItem("fondaSeller",name);
   document.getElementById("printSeller").textContent=name ? "Vendedor: "+name : "";
-  syncSharedState();
 }
 
 function updateTable(){
   const table=document.getElementById("tableNumber").value.trim();
   localStorage.setItem("fondaTable",table);
   document.getElementById("printTable").textContent=table ? "Mesa: "+table : "";
-  syncSharedState();
 }
 
 function updatePrintDate(){
@@ -665,7 +625,7 @@ async function printRawBT(){
   const tipPct=Math.max(0,Number(document.getElementById("tipPct").value)||0);
   const tip=Math.round(getTipEnabled()?subtotal*tipPct/100:0);
   try{
-    await printCollection.add({
+    const printRef=await printCollection.add({
       recordType:"device_print",
       date:todayKey(),
       createdAt:firebase.firestore.FieldValue.serverTimestamp(),
@@ -680,8 +640,12 @@ async function printRawBT(){
       items:items.map(it=>({name:String(it.name),price:Number(it.price),qty:Number(it.qty)})),
       total:Math.round(subtotal+tip)
     });
+    const confirmedPrint=await printRef.get({source:"server"});
+    if(!confirmedPrint.exists) throw new Error("Firebase no confirmó la impresión");
   }catch(err){
     console.error("No se pudo respaldar la impresión",err);
+    alert("No se pudo sincronizar la impresión con Firebase. Revisa Internet y las reglas de Firestore. No se abrirá RawBT hasta respaldarla.");
+    return;
   }
   updatePrintDate();
   const uri="rawbt:data:text/plain;base64,"+utf8ToBase64(text);
@@ -711,13 +675,14 @@ const savedTipChoice=localStorage.getItem("fondaTipChoice")||"yes";
 const tipRadio=document.querySelector(`input[name="tipChoice"][value="${savedTipChoice}"]`);
 if(tipRadio) tipRadio.checked=true;
 document.getElementById("tipPct").value=localStorage.getItem("fondaTipPct")||"10";
+const savedPaymentMethod=localStorage.getItem("fondaPaymentMethod")||"";
+document.querySelectorAll('input[name="paymentMethod"]').forEach(x=>x.checked=x.value===savedPaymentMethod);
 updateSeller();
 updateTable();
 renderTicket();
 renderDailySummary();
 startProductsSync();
 startSalesSync();
-startSharedStateSync();
 </script>
 </body>
 </html>
