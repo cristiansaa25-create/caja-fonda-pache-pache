@@ -467,7 +467,7 @@ async function printDailySummary(){
   text+="Ventas:   "+sales.length+"\n";
   text+="--------------------------------\n\n\n";
   try{
-    await printCollection.add({
+    const summaryRef=await printCollection.add({
       recordType:"daily_summary_print",
       date:today,
       createdAt:firebase.firestore.FieldValue.serverTimestamp(),
@@ -475,10 +475,22 @@ async function printDailySummary(){
       cash,
       debit,
       total:cash+debit,
-      saleCount:sales.length
+      saleCount:sales.length,
+      items:[],
+      method:"resumen_diario",
+      subtotal:cash+debit,
+      tipEnabled:false,
+      tipPct:0,
+      tip:0,
+      seller:"",
+      table:""
     });
+    const confirmedSummary=await summaryRef.get({source:"server"});
+    if(!confirmedSummary.exists) throw new Error("Firebase no confirmó el resumen diario");
   }catch(err){
     console.error("No se pudo respaldar el resumen",err);
+    alert("No se pudo sincronizar el resumen del día con Firebase. Revisa Internet y las reglas de Firestore. No se enviará a imprimir hasta respaldarlo.");
+    return;
   }
   const uri="rawbt:data:text/plain;base64,"+utf8ToBase64(text);
   window.location.href=uri;
